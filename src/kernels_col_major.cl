@@ -66,17 +66,17 @@ __kernel void myGEMM1(const int M, const int N, const int K,
                       __global float* C) {
     
     // Thread identifiers
-    const int globalCol = get_global_id(0); // Col ID of C (0..N)
-    const int globalRow = get_global_id(1); // Row ID of C (0..M)
+    const int globalRow = get_global_id(0); // Row ID of C (0..M)
+    const int globalCol = get_global_id(1); // Col ID of C (0..N)
 
     // Compute a single element (loop over K)
     float acc = 0.0f;
     for (int k=0; k<K; k++) {
-        acc += A[globalRow * K + k] * B[k * N + globalCol];
+        acc += A[k*M + globalRow] * B[globalCol*K + k];
     }
 
     // Store the result
-    C[globalRow * N + globalCol] = acc;
+    C[globalCol*M + globalRow] = acc;
 }
 
 #endif
@@ -90,12 +90,11 @@ __kernel void myGEMM2(const int M, const int N, const int K,
                       __global float* C) {
     
     // Thread identifiers
-    const int col = get_local_id(0); // Local col ID (max: TS)
-    const int row = get_local_id(1); // Local row ID (max: TS)
-    const int globalCol = TS * get_group_id(0) + col; // Col ID of C (0..N)
-    const int globalRow = TS * get_group_id(1) + row; // Row ID of C (0..M)
+    const int row = get_local_id(0); // Local row ID (max: TS)
+    const int col = get_local_id(1); // Local col ID (max: TS)
+    const int globalRow = TS*get_group_id(0) + row; // Row ID of C (0..M)
+    const int globalCol = TS*get_group_id(1) + col; // Col ID of C (0..N)
 
-    // TS is group size
     // Local memory to fit a tile of TS*TS elements of A and B
     __local float Asub[TS][TS];
     __local float Bsub[TS][TS];
@@ -104,21 +103,21 @@ __kernel void myGEMM2(const int M, const int N, const int K,
     float acc = 0.0f;
     
     // Loop over all tiles
-    const int numTiles = K / TS;
-    for (int t=0; t < numTiles; t++) {
+    const int numTiles = K/TS;
+    for (int t=0; t<numTiles; t++) {
 
         // Load one tile of A and B into local memory
-        const int tiledRow = TS * t + row;
-        const int tiledCol = TS * t + col;
-        Asub[row][col] = A[globalRow * K + tiledCol];
-        Bsub[row][col] = B[tiledRow * N + globalCol];
+        const int tiledRow = TS*t + row;
+        const int tiledCol = TS*t + col;
+        Asub[col][row] = A[tiledCol*M + globalRow];
+        Bsub[col][row] = B[globalCol*K + tiledRow];
 
         // Synchronise to make sure the tile is loaded
         barrier(CLK_LOCAL_MEM_FENCE);
 
         // Perform the computation for a single tile
         for (int k=0; k<TS; k++) {
-            acc += Asub[row][k] * Bsub[k][col];
+            acc += Asub[k][row] * Bsub[col][k];
         }
 
         // Synchronise before loading the next tile
@@ -126,7 +125,7 @@ __kernel void myGEMM2(const int M, const int N, const int K,
     }
 
     // Store the final result in C
-    C[globalRow * N + globalCol] = acc;
+    C[globalCol*M + globalRow] = acc;
 }
 
 #endif
@@ -140,10 +139,10 @@ __kernel void myGEMM3(const int M, const int N, const int K,
                       __global float* C) {
     
     // Thread identifiers
-    const int col = get_local_id(0); // Local col ID (max: TS)
-    const int row = get_local_id(1); // Local row ID (max: TS/WPT == RTS)
-    const int globalCol = TS * get_group_id(0) + col; // Col ID of C (0..N)
-    const int globalRow = TS * get_group_id(1) + row; // Row ID of C (0..M)
+    const int row = get_local_id(0); // Local row ID (max: TS)
+    const int col = get_local_id(1); // Local col ID (max: TS/WPT == RTS)
+    const int globalRow = TS*get_group_id(0) + row; // Row ID of C (0..M)
+    const int globalCol = TS*get_group_id(1) + col; // Col ID of C (0..N)
 
     // Local memory to fit a tile of TS*TS elements of A and B
     __local float Asub[TS][TS];
@@ -160,11 +159,11 @@ __kernel void myGEMM3(const int M, const int N, const int K,
     for (int t=0; t<numTiles; t++) {
 
         // Load one tile of A and B into local memory
-        const int tiledRow = TS * t + row;
-        const int tiledCol = TS * t + col;
         for (int w=0; w<WPT; w++) {
-            Asub[row + w * RTS][col] = A[(globalRow + w * RTS) * K + tiledCol];
-            Bsub[row + w * RTS][col] = B[(tiledRow + w * RTS) * N + globalCol];
+            const int tiledRow = TS*t + row;
+            const int tiledCol = TS*t + col;
+            Asub[col + w*RTS][row] = A[(tiledCol + w*RTS)*M + globalRow];
+            Bsub[col + w*RTS][row] = B[(globalCol + w*RTS)*K + tiledRow];
         }
 
         // Synchronise to make sure the tile is loaded
@@ -173,7 +172,7 @@ __kernel void myGEMM3(const int M, const int N, const int K,
         // Perform the computation for a single tile
         for (int k=0; k<TS; k++) {
             for (int w=0; w<WPT; w++) {
-                acc[w] += Asub[row + w * RTS][k] * Bsub[k][col];
+                acc[w] += Asub[k][row] * Bsub[col + w*RTS][k];
             }
         }
 
@@ -183,7 +182,7 @@ __kernel void myGEMM3(const int M, const int N, const int K,
 
     // Store the final results in C
     for (int w=0; w<WPT; w++) {
-        C[(globalRow + w * RTS) * N + globalCol] = acc[w];
+        C[(globalCol + w*RTS)*M + globalRow] = acc[w];
     }
 }
 
@@ -198,14 +197,14 @@ __kernel void myGEMM4(const int M, const int N, const int K,
                       __global floatX* C) {
 
     // Thread identifiers
-    const int col = get_local_id(0); // Local col ID (max: TS/WIDTH)
-    const int row = get_local_id(1); // Local row ID (max: TS)
-    const int globalCol = (TS / WIDTH) * get_group_id(0) + col; // Col ID of C (0..N/WIDTH)
-    const int globalRow = TS * get_group_id(1) + row; // Row ID of C (0..M/WIDTH)
+    const int row = get_local_id(0); // Local row ID (max: TS/WIDTH)
+    const int col = get_local_id(1); // Local col ID (max: TS)
+    const int globalRow = (TS/WIDTH)*get_group_id(0) + row; // Row ID of C (0..M/WIDTH)
+    const int globalCol = TS*get_group_id(1) + col; // Col ID of C (0..N)
 
     // Local memory to fit a tile of TS*TS elements of A and B
-    __local floatX Asub[TS][TS / WIDTH];
-    __local floatX Bsub[TS][TS / WIDTH];
+    __local floatX Asub[TS][TS/WIDTH];
+    __local floatX Bsub[TS][TS/WIDTH];
 
     // Initialise the accumulation registers
     #if WIDTH == 1
@@ -219,65 +218,65 @@ __kernel void myGEMM4(const int M, const int N, const int K,
     #endif
     
     // Loop over all tiles
-    const int numTiles = K / TS;
+    const int numTiles = K/TS;
     for (int tile=0; tile<numTiles; tile++) {
 
         // Load one tile of A and B into local memory
-        const int tiledRow = TS * tile + row;
-        const int tiledCol = (TS / WIDTH) * tile + col;
-        Asub[row][col] = A[globalRow * (K / WIDTH) + tiledCol];
-        Bsub[row][col] = B[tiledRow * (N / WIDTH) + globalCol];
+        const int tiledRow = (TS/WIDTH)*tile + row;
+        const int tiledCol = TS*tile + col;
+        Asub[col][row] = A[tiledCol*(M/WIDTH) + globalRow];
+        Bsub[col][row] = B[globalCol*(K/WIDTH) + tiledRow];
 
         // Synchronise to make sure the tile is loaded
         barrier(CLK_LOCAL_MEM_FENCE);
 
         // Perform the computation for a single tile
         floatX vecA, vecB;
-        float valA;
-        for (int k=0; k < TS / WIDTH; k++) {
-            vecA = Asub[row][k];
-            for (int w = 0; w < WIDTH; w++) {
-                vecB = Bsub[WIDTH * k + w][col];
+        float valB;
+        for (int k=0; k<TS/WIDTH; k++) {
+            vecB = Bsub[col][k];
+            for (int w=0; w<WIDTH; w++) {
+                vecA = Asub[WIDTH*k + w][row];
                 #if WIDTH == 1
-                    valA = vecA;
-                    acc += valA * vecB;
+                    valB = vecB;
+                    acc += vecA * valB;
                 #elif WIDTH == 2
                     switch (w) {
-                        case 0: valA = vecA.x; break;
-                        case 1: valA = vecA.y; break;
+                        case 0: valB = vecB.x; break;
+                        case 1: valB = vecB.y; break;
                     }
-                    acc.x += valA * vecB.x;
-                    acc.y += valA * vecB.y;
+                    acc.x += vecA.x * valB;
+                    acc.y += vecA.y * valB;
                 #elif WIDTH == 4
                     switch (w) {
-                        case 0: valA = vecA.x; break;
-                        case 1: valA = vecA.y; break;
-                        case 2: valA = vecA.z; break;
-                        case 3: valA = vecA.w; break;
+                        case 0: valB = vecB.x; break;
+                        case 1: valB = vecB.y; break;
+                        case 2: valB = vecB.z; break;
+                        case 3: valB = vecB.w; break;
                     }
-                    acc.x += valA * vecB.x;
-                    acc.y += valA * vecB.y;
-                    acc.z += valA * vecB.z;
-                    acc.w += valA * vecB.w;
+                    acc.x += vecA.x * valB;
+                    acc.y += vecA.y * valB;
+                    acc.z += vecA.z * valB;
+                    acc.w += vecA.w * valB;
                 #elif WIDTH == 8
                     switch (w) {
-                        case 0: valA = vecA.s0; break;
-                        case 1: valA = vecA.s1; break;
-                        case 2: valA = vecA.s2; break;
-                        case 3: valA = vecA.s3; break;
-                        case 4: valA = vecA.s4; break;
-                        case 5: valA = vecA.s5; break;
-                        case 6: valA = vecA.s6; break;
-                        case 7: valA = vecA.s7; break;
+                        case 0: valB = vecB.s0; break;
+                        case 1: valB = vecB.s1; break;
+                        case 2: valB = vecB.s2; break;
+                        case 3: valB = vecB.s3; break;
+                        case 4: valB = vecB.s4; break;
+                        case 5: valB = vecB.s5; break;
+                        case 6: valB = vecB.s6; break;
+                        case 7: valB = vecB.s7; break;
                     }
-                    acc.s0 += valA * vecB.s0;
-                    acc.s1 += valA * vecB.s1;
-                    acc.s2 += valA * vecB.s2;
-                    acc.s3 += valA * vecB.s3;
-                    acc.s4 += valA * vecB.s4;
-                    acc.s5 += valA * vecB.s5;
-                    acc.s6 += valA * vecB.s6;
-                    acc.s7 += valA * vecB.s7;
+                    acc.s0 += vecA.s0 * valB;
+                    acc.s1 += vecA.s1 * valB;
+                    acc.s2 += vecA.s2 * valB;
+                    acc.s3 += vecA.s3 * valB;
+                    acc.s4 += vecA.s4 * valB;
+                    acc.s5 += vecA.s5 * valB;
+                    acc.s6 += vecA.s6 * valB;
+                    acc.s7 += vecA.s7 * valB;
                 #endif
             }
         }
@@ -287,7 +286,7 @@ __kernel void myGEMM4(const int M, const int N, const int K,
     }
 
     // Store the final results in C
-    C[globalRow * (N / WIDTH) + globalCol] = acc;
+    C[globalCol*(M/WIDTH) + globalRow] = acc;
 }
 
 #endif

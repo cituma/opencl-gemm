@@ -18,6 +18,7 @@
 
 // Global variable with timing results
 profile_t timers[NUM_TIMERS];
+extern void MMult_4x4_14(float* A, float* B, float* C, int m, int n, int k);
 
 // =================================================================================================
 
@@ -56,8 +57,9 @@ int main(int argc, char* argv[]) {
         // Allocate memory for the matrices and fill the inputs with random numbers
         float* A = (float*)malloc(m*k*sizeof(float*));
         float* B = (float*)malloc(k*n*sizeof(float*));
+        float* C_CPU = (float*)malloc(m*n*sizeof(float*));
         float* C = (float*)malloc(m*n*sizeof(float*));
-        float* goldC = (float*)malloc(MAXSIZE*MAXSIZE*sizeof(float*));
+        //float* goldC = (float*)malloc(MAXSIZE*MAXSIZE*sizeof(float*));
         for (int i=0; i<m*k; i++) {
             A[i] = (float)rand() / (float)RAND_MAX;
         }
@@ -67,12 +69,16 @@ int main(int argc, char* argv[]) {
 
         // Loop over the configurations
         {
+            for (int i=0; i<m*n; i++) {
+                C_CPU[i] = 0.0f;
+            }
+            MMult_4x4_14(A, B, C_CPU, m, n, k);
+
 
             // Set the output matrix to zero (to erase the results of the previous run)
             for (int i=0; i<m*n; i++) {
                 C[i] = 0.0f;
             }
-
             // Get the name of the configuration
             char name[100];
             sprintf(name, "myGEMM.cl");
@@ -83,7 +89,7 @@ int main(int argc, char* argv[]) {
             // Compare the result to the 'golden' reference output in terms of the L2-norm
             double L2norm = 0.0;
             for (int i=0; i<m*n; i++) {
-                double val = C[i] - goldC[i];
+                double val = C[i] - C_CPU[i];
                 L2norm += val*val;
             }
             L2norm = sqrt(L2norm);
@@ -100,7 +106,8 @@ int main(int argc, char* argv[]) {
         free(A);
         free(B);
         free(C);
-        free(goldC);
+        free(C_CPU);
+        //free(goldC);
     }
 
     // End of the program

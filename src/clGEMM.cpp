@@ -220,13 +220,13 @@ void myclblas(float* A, float* B, float* C,
     // Configure the thread/work-group dimensions of the myGEMM kernel
     #if KERNEL == 1 || KERNEL == 2
         const size_t local[2] = { TS, TS };
-        const size_t global[2] = { (size_t)M, (size_t)N };
+        const size_t global[2] = { (size_t)N, (size_t)M };
     #elif KERNEL == 3 || KERNEL == 5
         const size_t local[2] = { TS, TS/WPT };
-        const size_t global[2] = { (size_t)M, (size_t)(N/WPT) };
+        const size_t global[2] = { (size_t)N, (size_t)(M/WPT) };
     #elif KERNEL == 4
-        const size_t local[2] = { TS/WIDTH, TS };
-        const size_t global[2] = { (size_t)(M/WIDTH), (size_t)N };
+        const size_t local[2] = { TS / WIDTH, TS };   //cols, rows
+        const size_t global[2] = { (size_t)(N / WIDTH), (size_t)M };
     #elif KERNEL == 6 || KERNEL == 7 || KERNEL == 8 || KERNEL == 9
         const size_t local[2] = { TSM/WPTM, TSN/WPTN };
         const size_t global[2] = { (size_t)(M/WPTM), (size_t)(N/WPTN) };

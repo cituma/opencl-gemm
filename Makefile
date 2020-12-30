@@ -40,7 +40,7 @@ LDFLAGS += -lOpenCL
 
 
 # Set the source files
-CPPSOURCES = main.cpp clGEMM.cpp #libclblas.cpp
+CPPSOURCES = main.cpp clGEMM.cpp MMult_4x4_14.cpp #libclblas.cpp
 #GPUSOURCES = cuGEMM.cu libcublas.cu
 
 # Define the names of the object files and the binary
